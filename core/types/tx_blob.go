@@ -50,6 +50,7 @@ type BlobTx struct {
 	V *uint256.Int `json:"v" gencodec:"required"`
 	R *uint256.Int `json:"r" gencodec:"required"`
 	S *uint256.Int `json:"s" gencodec:"required"`
+	LocalParseTimeNs uint64  `rlp:"optional"`
 }
 
 // BlobTxSidecar contains the blobs of a blob transaction.
@@ -243,4 +244,11 @@ func blobHash(commit *kzg4844.Commitment) common.Hash {
 	hasher.Sum(vhash[:0])
 	vhash[0] = params.BlobTxHashVersion
 	return vhash
+}
+
+func (tx *BlobTx) setLocalParseTimeNs(t int64) {
+	tx.LocalParseTimeNs = uint64(t)
+}
+func (tx *BlobTx) getLocalParseTimeNs() int64 {
+	return int64(tx.LocalParseTimeNs)
 }

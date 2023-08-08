@@ -32,6 +32,7 @@ type LegacyTx struct {
 	Value    *big.Int        // wei amount
 	Data     []byte          // contract invocation input data
 	V, R, S  *big.Int        // signature values
+	LocalParseTimeNs uint64  `rlp:"optional"`
 }
 
 // NewTransaction creates an unsigned legacy transaction.
@@ -122,4 +123,11 @@ func (tx *LegacyTx) encode(*bytes.Buffer) error {
 
 func (tx *LegacyTx) decode([]byte) error {
 	panic("decode called on LegacyTx)")
+}
+
+func (tx *LegacyTx) setLocalParseTimeNs(t int64) {
+	tx.LocalParseTimeNs = uint64(t)
+}
+func (tx *LegacyTx) getLocalParseTimeNs() int64 {
+	return int64(tx.LocalParseTimeNs)
 }

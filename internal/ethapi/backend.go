@@ -112,6 +112,9 @@ func GetAPIs(apiBackend Backend) []rpc.API {
 			Namespace: "eth",
 			Service:   NewTransactionAPI(apiBackend, nonceLock),
 		}, {
+			Namespace: "gradcap",
+			Service:   NewGradcapAPI(apiBackend),
+		}, {
 			Namespace: "txpool",
 			Service:   NewTxPoolAPI(apiBackend),
 		}, {

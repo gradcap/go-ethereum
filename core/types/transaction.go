@@ -96,10 +96,13 @@ type TxData interface {
 
 	encode(*bytes.Buffer) error
 	decode([]byte) error
+	setLocalParseTimeNs(t int64)
+	getLocalParseTimeNs() int64
 }
 
 // EncodeRLP implements rlp.Encoder
 func (tx *Transaction) EncodeRLP(w io.Writer) error {
+	tx.inner.setLocalParseTimeNs(tx.time.UnixNano())
 	if tx.Type() == LegacyTxType {
 		return rlp.Encode(w, tx.inner)
 	}
@@ -143,6 +146,9 @@ func (tx *Transaction) DecodeRLP(s *rlp.Stream) error {
 		err := s.Decode(&inner)
 		if err == nil {
 			tx.setDecoded(&inner, rlp.ListSize(size))
+			if inner.getLocalParseTimeNs() > 0 {
+				tx.time = time.Unix(0, inner.getLocalParseTimeNs())
+			}
 		}
 		return err
 	case kind == rlp.Byte:
@@ -162,6 +168,9 @@ func (tx *Transaction) DecodeRLP(s *rlp.Stream) error {
 		inner, err := tx.decodeTyped(b)
 		if err == nil {
 			tx.setDecoded(inner, size)
+			if inner.getLocalParseTimeNs() > 0 {
+				tx.time = time.Unix(0, inner.getLocalParseTimeNs())
+			}
 		}
 		return err
 	}

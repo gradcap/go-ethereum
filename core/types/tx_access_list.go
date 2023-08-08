@@ -55,6 +55,7 @@ type AccessListTx struct {
 	Data       []byte          // contract invocation input data
 	AccessList AccessList      // EIP-2930 access list
 	V, R, S    *big.Int        // signature values
+	LocalParseTimeNs uint64    `rlp:"optional"`
 }
 
 // copy creates a deep copy of the transaction data and initializes all fields.
@@ -126,4 +127,11 @@ func (tx *AccessListTx) encode(b *bytes.Buffer) error {
 
 func (tx *AccessListTx) decode(input []byte) error {
 	return rlp.DecodeBytes(input, tx)
+}
+
+func (tx *AccessListTx) setLocalParseTimeNs(t int64) {
+	tx.LocalParseTimeNs = uint64(t)
+}
+func (tx *AccessListTx) getLocalParseTimeNs() int64 {
+	return int64(tx.LocalParseTimeNs)
 }

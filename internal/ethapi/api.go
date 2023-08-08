@@ -1834,6 +1834,12 @@ func marshalReceipt(receipt *types.Receipt, blockHash common.Hash, blockNumber u
 	return fields
 }
 
+func gradcapMarshalReceipt(receipt *types.Receipt, blockHash common.Hash, blockNumber uint64, signer types.Signer, tx *types.Transaction, txIndex int) map[string]interface{} {
+	fields := marshalReceipt(receipt, blockHash, blockNumber, signer, tx, txIndex)
+	fields["localParseTimeNs"] = hexutil.Uint64(tx.Time().UnixNano())
+	return fields
+}
+
 // sign is a helper function that signs a transaction with the private key of the given address.
 func (s *TransactionAPI) sign(addr common.Address, tx *types.Transaction) (*types.Transaction, error) {
 	// Look up the wallet containing the requested signer
@@ -2075,6 +2081,141 @@ func (s *TransactionAPI) Resend(ctx context.Context, sendArgs TransactionArgs, g
 	}
 	return common.Hash{}, fmt.Errorf("transaction %#x not found", matchTx.Hash())
 }
+
+// GradcapAPI exposes methods customized for GradCap evm deployments.
+type GradcapAPI struct {
+	b         Backend
+}
+
+type GradcapRPCTransaction struct {
+	RPCTransaction
+	LocalParseTimeNs hexutil.Uint64   `json:"localParseTimeNs"`
+}
+
+// NewGradcapAPI creates a new RPC service with methods customized for GradCap deployments.
+func NewGradcapAPI(b Backend) *GradcapAPI {
+	return &GradcapAPI{b}
+}
+
+// GetTransactionReceipt returns the transaction receipt for the given transaction hash.
+func (s *GradcapAPI) GetTransactionReceipt(ctx context.Context, hash common.Hash) (map[string]interface{}, error) {
+	tx, blockHash, blockNumber, index, err := s.b.GetTransaction(ctx, hash)
+	if tx == nil || err != nil {
+		// When the transaction doesn't exist, the RPC method should return JSON null
+		// as per specification.
+		return nil, nil
+	}
+	header, err := s.b.HeaderByHash(ctx, blockHash)
+	if err != nil {
+		return nil, err
+	}
+	receipts, err := s.b.GetReceipts(ctx, blockHash)
+	if err != nil {
+		return nil, err
+	}
+	if uint64(len(receipts)) <= index {
+		return nil, nil
+	}
+	receipt := receipts[index]
+
+	// Derive the sender.
+	signer := types.MakeSigner(s.b.ChainConfig(), header.Number, header.Time)
+	return gradcapMarshalReceipt(receipt, blockHash, blockNumber, signer, tx, int(index)), nil
+}
+
+// GetBlockReceipts returns the block receipts for the given block number.
+func (s *GradcapAPI) GetBlockReceipts(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) ([]map[string]interface{}, error) {
+	block, err := s.b.BlockByNumberOrHash(ctx, blockNrOrHash)
+	if block == nil || err != nil {
+		// When the block doesn't exist, the RPC method should return JSON null
+		// as per specification.
+		return nil, nil
+	}
+	receipts, err := s.b.GetReceipts(ctx, block.Hash())
+	if err != nil {
+		return nil, err
+	}
+	txs := block.Transactions()
+	if len(txs) != len(receipts) {
+		return nil, fmt.Errorf("receipts length mismatch: %d vs %d", len(txs), len(receipts))
+	}
+
+	// Derive the sender.
+	signer := types.MakeSigner(s.b.ChainConfig(), block.Number(), block.Time())
+
+	result := make([]map[string]interface{}, len(receipts))
+	for i, receipt := range receipts {
+		tx := txs[i]
+		result[i] = gradcapMarshalReceipt(receipt, block.Hash(), block.NumberU64(), signer, tx, i)
+	}
+
+	return result, nil
+}
+
+func (s *GradcapAPI) GetBlockByNumber(ctx context.Context, number rpc.BlockNumber, fullTx bool) (map[string]interface{}, error) {
+	block, err := s.b.BlockByNumber(ctx, number)
+	if block != nil && err == nil {
+		response, err := s.rpcMarshalBlock(ctx, block, true, fullTx)
+		if err == nil && number == rpc.PendingBlockNumber {
+			// Pending blocks need to nil out a few fields
+			for _, field := range []string{"hash", "nonce", "miner"} {
+				response[field] = nil
+			}
+		}
+		return response, err
+	}
+	return nil, err
+}
+
+// RPCMarshalBlock converts the given block to the RPC output which depends on fullTx. If inclTx is true transactions are
+// returned. When fullTx is true the returned block contains full transaction details, otherwise it will only contain
+// transaction hashes.
+func GradcapRPCMarshalBlock(block *types.Block, inclTx bool, fullTx bool, config *params.ChainConfig) map[string]interface{} {
+	fields := RPCMarshalHeader(block.Header())
+	fields["size"] = hexutil.Uint64(block.Size())
+
+	if inclTx {
+		formatTx := func(idx int, tx *types.Transaction) interface{} {
+			return tx.Hash()
+		}
+		if fullTx {
+			formatTx = func(idx int, tx *types.Transaction) interface{} {
+				rpcTx := newRPCTransactionFromBlockIndex(block, uint64(idx), config)
+				return &GradcapRPCTransaction{
+					RPCTransaction: *rpcTx,
+					LocalParseTimeNs: hexutil.Uint64(tx.Time().UnixNano()),
+				}
+			}
+		}
+		txs := block.Transactions()
+		transactions := make([]interface{}, len(txs))
+		for i, tx := range txs {
+			transactions[i] = formatTx(i, tx)
+		}
+		fields["transactions"] = transactions
+	}
+	uncles := block.Uncles()
+	uncleHashes := make([]common.Hash, len(uncles))
+	for i, uncle := range uncles {
+		uncleHashes[i] = uncle.Hash()
+	}
+	fields["uncles"] = uncleHashes
+	if block.Header().WithdrawalsHash != nil {
+		fields["withdrawals"] = block.Withdrawals()
+	}
+	return fields
+}
+
+// rpcMarshalBlock uses the generalized output filler, then adds the total difficulty field, which requires
+// a `BlockchainAPI`.
+func (s *GradcapAPI) rpcMarshalBlock(ctx context.Context, b *types.Block, inclTx bool, fullTx bool) (map[string]interface{}, error) {
+	fields := GradcapRPCMarshalBlock(b, inclTx, fullTx, s.b.ChainConfig())
+	if inclTx {
+		fields["totalDifficulty"] = (*hexutil.Big)(s.b.GetTd(ctx, b.Hash()))
+	}
+	return fields, nil
+}
+
 
 // DebugAPI is the collection of Ethereum APIs exposed over the debugging
 // namespace.

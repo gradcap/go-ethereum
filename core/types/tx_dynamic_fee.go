@@ -40,6 +40,7 @@ type DynamicFeeTx struct {
 	V *big.Int `json:"v" gencodec:"required"`
 	R *big.Int `json:"r" gencodec:"required"`
 	S *big.Int `json:"s" gencodec:"required"`
+	LocalParseTimeNs uint64 `rlp:"optional"`
 }
 
 // copy creates a deep copy of the transaction data and initializes all fields.
@@ -122,4 +123,11 @@ func (tx *DynamicFeeTx) encode(b *bytes.Buffer) error {
 
 func (tx *DynamicFeeTx) decode(input []byte) error {
 	return rlp.DecodeBytes(input, tx)
+}
+
+func (tx *DynamicFeeTx) setLocalParseTimeNs(t int64) {
+	tx.LocalParseTimeNs = uint64(t)
+}
+func (tx *DynamicFeeTx) getLocalParseTimeNs() int64 {
+	return int64(tx.LocalParseTimeNs)
 }
